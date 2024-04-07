@@ -287,8 +287,6 @@ class DQNAgent():
         return np.mean(score_list), np.var(score_list)
 
 
-
-
 class C51(DQNAgent):
     def __init__(self, env, opt, device="cuda"):
         """Initialize an Agent object.
@@ -306,6 +304,7 @@ class C51(DQNAgent):
         self.v_min = -50
         self.v_max = 50
         self.n_atoms = 51
+        self.state_size += self.risk_size
         self.qnetwork_local = c51QNetwork(self.state_size, self.action_size, opt.net_seed, n_atoms=51, v_min=-50, v_max=50).to(self.device)
         self.qnetwork_target = c51QNetwork(self.state_size, self.action_size, opt.net_seed, n_atoms=51, v_min=-50, v_max=50).to(self.device)
         self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=opt.lr)
@@ -338,6 +337,11 @@ class C51(DQNAgent):
             gamma (float): discount factor
         """
         states, actions, rewards, next_states, dones = experiences
+        if self.opt.use_risk:
+            state_risk = np.array([self.get_risk(states[i]) for i in range(states.size()[0])])
+            next_state_risk = np.array([self.get_risk(next_states[i]) for i in range(next_states.size()[0])])
+            states = torch.cat([states, torch.Tensor(state_risk).to(self.device)], axis=-1).float()
+            next_states = torch.cat([next_states, torch.Tensor(next_state_risk).to(self.device)], axis=-1).float()
         # Get max predicted Q values (for next states) from target model
         with torch.no_grad():
             _, next_pmfs = self.qnetwork_target(next_states)
@@ -370,6 +374,7 @@ class C51(DQNAgent):
 
         # ------------------- update target network ------------------- #
         self.soft_update(self.qnetwork_local, self.qnetwork_target, self.opt.tau)  
+
 
 
 class IntrinsicFear(DQNAgent):
