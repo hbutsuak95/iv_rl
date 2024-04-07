@@ -70,6 +70,12 @@ model_dict = {"DQN"                        : DQNAgent,
 parser = argparse.ArgumentParser(description="DQN options")
 parser.add_argument("--env", type=str, default="LunarLander-v2",
                     help="Gym environment")
+parser.add_argument("--map_name", type=str, default="4x4",
+                    help="Gym environment")
+parser.add_argument("--policy_path", type=str, default="None",
+                    help="Gym environment")
+parser.add_argument("--risk_path", type=str, default="None",
+                    help="Gym environment")
 parser.add_argument("--model", type=str, choices=model_dict.keys(), required=True,
                     help="which RL algorithm to run??")
 parser.add_argument("--lr", type=float, default=5e-4,

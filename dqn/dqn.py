@@ -39,6 +39,11 @@ class DQNAgent():
         self.qnetwork_target = QNetwork(self.state_size+self.risk_size, self.action_size, opt.net_seed).to(self.device)
         self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=opt.lr)
 
+        if os.path.exists(opt.policy_path):
+            self.qnetwork_local.load_state_dict(torch.load(opt.policy_path))
+            self.qnetwork_target.load_state_dict(torch.load(opt.policy_path))
+
+
         # Replay memory
         self.memory = ReplayBuffer(opt, self.action_size, 42, self.device, self.mask)
         # Initialize time step (for updating every UPDATE_EVERY steps)
@@ -250,6 +255,12 @@ class DQNAgent():
             if i_episode % 100 == 0:
                 print('\rEpisode {}\tAverage Score: {:.2f}'.format(i_episode, np.mean(scores_window)))
             #self.save(scores)
+        torch.save(self.qnetwork_local.state_dict(), "qnet_frozenlake.pt")
+        if self.opt.use_risk:
+            import pickle
+            with open("risk_stats_frozen_lake.pkl", "wb") as f:
+                pickle.dump(self.risk_stats, f)
+
 
     def test(self, episode, num_trials=5, max_t=1000):
         score_list, variance_list = [], []
@@ -654,7 +665,11 @@ class LossAttDQN(DQNAgent):
         self.qnetwork_local = TwoHeadQNetwork(self.state_size, self.action_size, opt.net_seed).to(self.device)
         self.qnetwork_target = TwoHeadQNetwork(self.state_size, self.action_size, opt.net_seed).to(self.device)
         self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=opt.lr)
+        if os.path.exists(opt.policy_path):
+            self.qnetwork_local.load_state_dict(torch.load(opt.policy_path))
+            self.qnetwork_target.load_state_dict(torch.load(opt.policy_path))
 
+            
     def learn(self, experiences, gamma):
         """Update value parameters using given batch of experience tuples.
         Params
