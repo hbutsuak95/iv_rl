@@ -309,6 +309,12 @@ class C51(DQNAgent):
         self.qnetwork_target = c51QNetwork(self.state_size, self.action_size, opt.net_seed, n_atoms=51, v_min=-50, v_max=50).to(self.device)
         self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=opt.lr)
 
+        if os.path.exists(opt.policy_path):
+            self.qnetwork_local.load_state_dict(torch.load(opt.policy_path))
+            self.qnetwork_target.load_state_dict(torch.load(opt.policy_path))
+
+
+
     def act(self, state, eps=0., is_train=False):
         """Returns actions for given state as per current policy.
         

@@ -28,6 +28,29 @@ class QNetwork(nn.Module):
         x = F.relu(self.fc2(x))
         return self.fc3(x)
 
+class c51QNetwork(nn.Module):
+    def __init__(self, state_size, action_size, seed, n_atoms=101, v_min=-100, v_max=100):
+        super().__init__()
+        self.seed = torch.manual_seed(seed)
+        self.n_atoms = n_atoms
+        self.register_buffer("atoms", torch.linspace(v_min, v_max, steps=n_atoms))
+        self.n = 4
+        self.network = nn.Sequential(
+            nn.Linear(state_size, 120),
+            nn.ReLU(),
+            nn.Linear(120, 84),
+            nn.ReLU(),
+            nn.Linear(84, self.n * n_atoms),
+        )
+
+    def forward(self, x, action=None):
+        logits = self.network(x)
+        # probability mass function for each action
+        pmfs = torch.softmax(logits.view(len(x), self.n, self.n_atoms), dim=2)
+        q_values = (pmfs * self.atoms).sum(2)
+        if action is None:
+            action = torch.argmax(q_values, 1)
+        return action.cpu().numpy()[0], pmfs[torch.arange(len(x)), action]
 
 
 
