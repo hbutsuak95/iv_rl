@@ -72,6 +72,8 @@ parser.add_argument("--env", type=str, default="LunarLander-v2",
                     help="Gym environment")
 parser.add_argument("--map_name", type=str, default="4x4",
                     help="Gym environment")
+parser.add_argument("--hole_reward", type=float, default=0,
+                    help="Learning rate for SGD update")
 parser.add_argument("--policy_path", type=str, default="None",
                     help="Gym environment")
 parser.add_argument("--risk_path", type=str, default="None",
@@ -228,12 +230,12 @@ if __name__ == "__main__":
         pass
     wandb.init(config=vars(opt), entity="kaustubh_umontreal",
                     project="risk_aware_exploration",
-                    monitor_gym=True,
+                    #monitor_gym=True,
                     save_code=True)
                     
     Model = model_dict[opt.model]
     if "sac" not in opt.model.lower():
-        env = gym.make(opt.env)
+        env = gym.make(opt.env, map_name=opt.map_name, hole_reward=opt.hole_reward)
         # env.seed(opt.env_seed)
         agent = Model(env, opt, device=device)
         agent.train(n_episodes=opt.num_episodes, eps_decay=opt.eps_decay)
