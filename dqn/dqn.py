@@ -179,6 +179,7 @@ class DQNAgent():
         def_risk = [0.1]*10
         ep_obs = []
         num_terminations = 0
+        success = []
         for i_episode in range(1, n_episodes+1):
             obs, _ = self.env.reset()
             if self.opt.use_risk:
@@ -217,7 +218,8 @@ class DQNAgent():
                 ep_Q.append(Q)
                 ep_loss.append(self.loss)
                 if done:
-                    num_terminations += (terminated and reward == 0)
+                    num_terminations += (terminated and reward == self.opt.hole_reward)
+                    is_success = (terminated and reward > 0)
                     if self.opt.use_risk:
                         # print(ep_obs, )
                         e_risks = list(reversed(range(t+1))) if terminated and reward == 0 else [t+1]*(t+1)
@@ -243,17 +245,19 @@ class DQNAgent():
  
             scores_window.append(score)        # save most recent score
             scores.append(score)               # save most recent score
+            success.append(is_success)
             eps = max(eps_end, eps_decay*eps)  # decrease epsilon
             wandb.log({"Moving Average Return/100episode": np.mean(scores_window)}, i_episode)
+            wandb.log({"Success Rate": np.mean(success[-100:])}, i_episode)
             wandb.log({"Num terminations ": num_terminations}, i_episode)
             wandb.log({"Episode": i_episode-1}, i_episode)
 
             #if np.mean(self.test_scores[-100:]) >= self.opt.goal_score and flag:
             #    flag = 0 
             #    wandb.log({"EpisodeSolved": i_episode}, commit=False)
-            print('\rEpisode {}\tAverage Score: {:.2f}'.format(i_episode, np.mean(scores_window)), end="")
+            print('\rEpisode {}\tAverage Score: {:.2f}'.format(i_episode, np.mean(success[-100:])), end="")
             if i_episode % 100 == 0:
-                print('\rEpisode {}\tAverage Score: {:.2f}'.format(i_episode, np.mean(scores_window)))
+                print('\rEpisode {}\tAverage Score: {:.2f}'.format(i_episode, np.mean(success[-100:])))
             #self.save(scores)
         torch.save(self.qnetwork_local.state_dict(), "qnet_frozenlake.pt")
         if self.opt.use_risk:
