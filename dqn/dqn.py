@@ -201,11 +201,14 @@ class DQNAgent():
                     next_state = np.array([next_obs] + def_risk)
                 else:
                     next_state = np.array([next_obs])
+                if (terminated and reward == 0): #self.opt.hole_reward):
+                    reward += self.opt.hole_reward
+                    
                 logs = self.step(np.array([obs]), action, reward, np.array([next_obs]), done)
                 state = next_state
                 obs = next_obs
-                if done:
-                    reward += self.opt.end_reward
+                #if (terminated and reward == self.opt.hole_reward):
+                #    reward += self.opt.hole_reward
                 score += reward
                 if logs is not None:
                     # try:
@@ -255,9 +258,9 @@ class DQNAgent():
             #if np.mean(self.test_scores[-100:]) >= self.opt.goal_score and flag:
             #    flag = 0 
             #    wandb.log({"EpisodeSolved": i_episode}, commit=False)
-            print('\rEpisode {}\tAverage Score: {:.2f}'.format(i_episode, np.mean(success[-100:])), end="")
+            print('\rEpisode {}\tAverage Score: {:.2f}'.format(i_episode, np.mean(scores_window)), end="")
             if i_episode % 100 == 0:
-                print('\rEpisode {}\tAverage Score: {:.2f}'.format(i_episode, np.mean(success[-100:])))
+                print('\rEpisode {}\tAverage Score: {:.2f}'.format(i_episode, np.mean(scores_window)))
             #self.save(scores)
         torch.save(self.qnetwork_local.state_dict(), "qnet_frozenlake.pt")
         if self.opt.use_risk:

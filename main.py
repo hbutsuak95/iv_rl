@@ -223,7 +223,7 @@ if "Mean_Target" in opt.model:
     opt.mean_target = True
 
 if __name__ == "__main__":
-    device = torch.device("cpu")
+    device = torch.device("cpu")#cuda")
     try:
         os.makedirs(opt.log_dir)
     except:
@@ -235,7 +235,7 @@ if __name__ == "__main__":
                     
     Model = model_dict[opt.model]
     if "sac" not in opt.model.lower():
-        env = gym.make(opt.env, map_name=opt.map_name, hole_reward=opt.hole_reward)
+        env = gym.make(opt.env) #, map_name=opt.map_name, hole_reward=opt.hole_reward)
         # env.seed(opt.env_seed)
         agent = Model(env, opt, device=device)
         agent.train(n_episodes=opt.num_episodes, eps_decay=opt.eps_decay)
