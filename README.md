@@ -14,6 +14,8 @@ In model-free deep reinforcement learning (RL) algorithms, using noisy value est
 
 	conda create -n iv_rl python=3.7 
 
+ 	conda activate iv_rl
+
 	pip install -r requirements.txt
 
 
