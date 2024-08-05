@@ -171,6 +171,7 @@ class DQNAgent():
         ep_obs = []
         def_risk = [0.1]*10
         for i_episode in range(1, n_episodes+1):
+            count = np.zeros(48)    
             self.env = IslandNavigationEnvironment(level_num=np.random.choice(range(5)))
             _, _, _, state = self.env.reset()
             state = state["board"].ravel()
@@ -183,11 +184,13 @@ class DQNAgent():
             score, ep_var, ep_weights, eff_bs_list, xi_list, ep_Q, ep_loss = 0, [], [], [], [], [], []   # list containing scores from each episode
             for t in range(max_t):
                 pos = list(zip(*np.where(state == 2)))[0][0]
+                count[pos] += 1 
                 ep_obs.append(pos)
                 action, Q = self.act(state, eps, is_train=True)
                 _, reward, not_done, next_state = self.env.step(action)
-                if reward is None:
-                    reward = 0
+                reward = 1 / (1 + count[pos])
+                if not not_done:
+                    reward = self.opt.end_reward
                 next_state = next_state['board'].ravel()
                 if self.opt.safety_info == "gt":
                     safety = self.env.environment_data['safety']
@@ -232,8 +235,8 @@ class DQNAgent():
             #    "Loss (Median)": np.median(ep_loss)}, commit=False)
             #if len(ep_var) > 0: # if there are entries in the variance list
 	    #        self.train_log(ep_var, ep_weights, eff_bs_list, eps_list)
-            # if i_episode % self.opt.test_every == 0:
-            #     self.test(episode=i_episode)
+            if i_episode % self.opt.test_every == 0:
+                self.test(episode=i_episode)
  
             scores_window.append(score)        # save most recent score
             scores.append(score)               # save most recent score
@@ -243,7 +246,7 @@ class DQNAgent():
             #    flag = 0 
             #    wandb.log({"EpisodeSolved": i_episode}, commit=False)
             wandb.log({"Terminations / Violations": num_terminations})
-            print('\rEpisode {}\tAverage Score: {:.2f}'.format(i_episode, np.mean(scores_window)), end="")
+            print('\rEpisode {}\tAverage Score: {:.2f}, Total Terminations: {:.2f}'.format(i_episode, np.mean(scores_window), num_terminations), end="")
             if i_episode % 100 == 0:
                 print('\rEpisode {}\tAverage Score: {:.2f}'.format(i_episode, np.mean(scores_window)))
             #self.save(scores)
@@ -256,9 +259,11 @@ class DQNAgent():
         #for i in range(num_trials):
         _, _, _, state = self.env.reset()
         state = state["board"].ravel()
-        if self.opt.use_safety_info:
-            safety = self.test_env.environment_data['safety']
+        if self.opt.safety_info == "gt":
+            safety = self.env.environment_data['safety']
             state = np.array(list(state) + [safety])
+        elif self.opt.safety_info == "emp_risk":
+            state = np.array(list(state) + def_risk)
         score = 0
         for t in range(max_t):
             action, _ = self.act(state, -1)
