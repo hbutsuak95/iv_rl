@@ -11,6 +11,7 @@ from collections import namedtuple, deque, Counter
 
 from utils import * 
 from .networks import *
+import src.utils as utils
 
 
 class DQNAgent():
@@ -35,10 +36,19 @@ class DQNAgent():
         self.mask = False
 
         # Q-Network
-        self.qnetwork_local = QNetwork(self.state_size, self.action_size, opt.net_seed).to(self.device)
-        self.qnetwork_target = QNetwork(self.state_size, self.action_size, opt.net_seed).to(self.device)
+        self.qnetwork_local = QNetwork(self.state_size, self.action_size, opt.net_seed, use_risk=self.opt.use_risk, risk_size=self.opt.quantile_num).to(self.device)
+        self.qnetwork_target = QNetwork(self.state_size, self.action_size, opt.net_seed, use_risk=self.opt.use_risk, risk_size=self.opt.quantile_num).to(self.device)
         self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=opt.lr)
 
+        # Risk network
+        if self.opt.use_risk:
+            self.risk_net = RiskNetwork(self.state_size, self.opt.quantile_num, opt.net_seed, model_type="risk").to(self.device)
+            self.risk_bins = np.array([i*self.opt.quantile_size for i in range(self.opt.quantile_num+1)])
+
+        if self.opt.use_risk and self.opt.fine_tune_risk:
+            self.risk_rb = utils.ReplayBuffer()
+            self.risk_opt = optim.Adam(self.risk_net.parameters(), lr=self.opt.risk_lr)
+            self.risk_criterion = nn.NLLLoss()
         # Replay memory
         self.memory = ReplayBuffer(opt, self.action_size, 42, self.device, self.mask)
         # Initialize time step (for updating every UPDATE_EVERY steps)
@@ -75,7 +85,9 @@ class DQNAgent():
         state = torch.from_numpy(state).float().unsqueeze(0).to(self.device)
         self.qnetwork_local.eval()
         with torch.no_grad():
-            action_values = self.qnetwork_local(state)
+            risk = self.risk_net(state) if self.opt.use_risk else None
+            # print(state.size(), risk.size())
+            action_values = self.qnetwork_local(state, risk)
         self.qnetwork_local.train()
         action_values = action_values.cpu().data.numpy()
         # Epsilon-greedy action selection
@@ -92,13 +104,20 @@ class DQNAgent():
             gamma (float): discount factor
         """
         states, actions, rewards, next_states, dones = experiences
+
+        with torch.no_grad():
+            risk = self.risk_net(states) if self.opt.use_risk else None
+            next_risk = self.risk_net(next_states) if self.opt.use_risk else None
+
         # Get max predicted Q values (for next states) from target model
-        Q_targets_next = self.qnetwork_target(next_states).detach().max(1)[0].unsqueeze(1)
+        Q_targets_next = self.qnetwork_target(next_states, next_risk).detach().max(1)[0].unsqueeze(1)
+
+
         # Compute Q targets for current states 
         Q_targets = rewards + (gamma * Q_targets_next * (1 - dones))
 
         # Get expected Q values from local model
-        Q_expected = self.qnetwork_local(states).gather(1, actions)
+        Q_expected = self.qnetwork_local(states, risk).gather(1, actions)
 
         # Compute loss
         weights = torch.ones(Q_expected.size()).to(self.device) / self.opt.batch_size
@@ -156,17 +175,32 @@ class DQNAgent():
         scores = []
         scores_window = deque(maxlen=100)  # last 100 scores
         eps = eps_start                    # initialize epsilon
+
+        f_next_obs = None
+        num_terminations = 0
         for i_episode in range(1, n_episodes+1):
-            state = self.env.reset()
+            state, _ = self.env.reset()
+            #print(state)
             score, ep_var, ep_weights, eff_bs_list, xi_list, ep_Q, ep_loss = 0, [], [], [], [], [], []   # list containing scores from each episode
             for t in range(max_t):
                 action, Q = self.act(state, eps, is_train=True)
-                next_state, reward, done, _ = self.env.step(action)
+                next_state, reward, terminated, truncated, _ = self.env.step(action)
+                f_next_obs = torch.from_numpy(next_state).unsqueeze(0) if f_next_obs is None else torch.cat([f_next_obs, torch.from_numpy(next_state).unsqueeze(0)], axis=0)
+                done = np.logical_or(terminated, truncated)
+                if terminated:
+                    reward += self.opt.end_reward   
+                    num_terminations += 1 
                 logs = self.step(state, action, reward, next_state, done)
                 state = next_state
-                if done:
-                    reward += self.opt.end_reward
                 score += reward
+                if self.opt.use_risk and self.opt.fine_tune_risk and len(self.risk_rb) > self.opt.risk_batch_size:
+                        risk_data = self.risk_rb.sample(self.opt.risk_batch_size)
+                        pred = self.risk_net(risk_data["next_obs"].to(self.device))
+                        risk_loss = self.risk_criterion(pred, torch.argmax(risk_data["risks"].squeeze(), axis=1).to(self.device))
+                        self.risk_opt.zero_grad()
+                        risk_loss.backward()
+                        self.risk_opt.step()
+                        # logger.store(**{"risk/risk_loss": risk_loss.item()})
                 if logs is not None:
                     # try:
                     ep_var.extend(logs[0])
@@ -178,6 +212,13 @@ class DQNAgent():
                 ep_Q.append(Q)
                 ep_loss.append(self.loss)
                 if done:
+                    if self.opt.use_risk and self.opt.fine_tune_risk:
+                        f_risks = np.array(list(reversed(range(t+1)) if terminated else [max_t]*(t+1)))
+                        f_risks = f_risks.reshape(-1, 1)
+                        f_risks_quant = torch.Tensor(np.apply_along_axis(lambda x: np.histogram(x, bins=self.risk_bins)[0], 1, np.expand_dims(f_risks, 1)))
+                        # print(f_next_obs.size())
+                        self.risk_rb.add(None, f_next_obs, None, None, None, None, f_risks_quant, torch.from_numpy(f_risks))
+                        f_next_obs = None
                     break 
 
             #wandb.log({"V(s) (VAR)": np.var(ep_Q), "V(s) (Mean)": np.mean(ep_Q),
@@ -194,7 +235,7 @@ class DQNAgent():
             scores_window.append(score)        # save most recent score
             scores.append(score)               # save most recent score
             eps = max(eps_end, eps_decay*eps)  # decrease epsilon
-            #wandb.log({"Moving Average Return/100episode": np.mean(scores_window)})
+            wandb.log({"Moving Average Return/100episode": np.mean(scores_window), "Return": score, "Num Terminations": num_terminations})
             #if np.mean(self.test_scores[-100:]) >= self.opt.goal_score and flag:
             #    flag = 0 
             #    wandb.log({"EpisodeSolved": i_episode}, commit=False)
@@ -206,11 +247,12 @@ class DQNAgent():
     def test(self, episode, num_trials=5, max_t=1000):
         score_list, variance_list = [], []
         #for i in range(num_trials):
-        state = self.env.reset()
+        state, _ = self.env.reset()
         score = 0
         for t in range(max_t):
             action, _ = self.act(state, -1)
-            next_state, reward, done, _ = self.env.step(action)
+            next_state, reward, terminated, truncated, _ = self.env.step(action)
+            done = np.logical_or(terminated, truncated)
             state = next_state
             score += reward
             if done:

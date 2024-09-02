@@ -1,5 +1,5 @@
 import os
-import gym 
+import gymnasium as gym 
 import argparse
 
 import torch
@@ -8,19 +8,20 @@ import torch.optim as optim
 import torch.nn.functional as F
 
 from dqn import * 
-from sac import *
+#from sac import *
 from utils import *
 from config import config 
-from codecarbon import EmissionsTracker
-tracker = EmissionsTracker()
-tracker.start()
+# from codecarbon import EmissionsTracker
+# tracker = EmissionsTracker()
+# tracker.start()
 
 import os 
 import time
+import wandb
 import warnings
 warnings.filterwarnings('ignore')
 
-os.environ["WANDB_SILENT"] = "true"
+# os.environ["WANDB_SILENT"] = "true"
 
 model_dict = {"DQN"                        : DQNAgent,
               "VarDQN"                     : LossAttDQN,
@@ -43,21 +44,21 @@ model_dict = {"DQN"                        : DQNAgent,
               "UWAC_VarEnsembleDQN"        : UWAC_LakshmiBootstrapDQN,
 
 
-              "SAC"                        : SACTrainer,
-              "VarSAC"                     : VarSACTrainer,
-              "IV_VarSAC"                  : IV_VarSAC,
+              #"SAC"                        : SACTrainer,
+              #"VarSAC"                     : VarSACTrainer,
+              #"IV_VarSAC"                  : IV_VarSAC,
 
-              "EnsembleSAC"                : EnsembleSAC,
-              "IV_EnsembleSAC"             : IV_EnsembleSAC,
-              "VarEnsembleSAC"             : VarEnsembleSAC,
-              "IV_SAC"                     : IV_VarEnsembleSAC,
-              "IV_VarEnsembleSAC"          : IV_VarEnsembleSAC,
+              #"EnsembleSAC"                : EnsembleSAC,
+              #"IV_EnsembleSAC"             : IV_EnsembleSAC,
+              #"VarEnsembleSAC"             : VarEnsembleSAC,
+              #"IV_SAC"                     : IV_VarEnsembleSAC,
+              #"IV_VarEnsembleSAC"          : IV_VarEnsembleSAC,
 
-              "SunriseSAC"                 : SunriseSAC,
-              "Sunrise_VarEnsembleSAC"     : Sunrise_VarEnsembleSAC,
-              
-              "UWACSAC"                    : UWACSAC,
-              "UWAC_VarEnsembleSAC"        : UWAC_VarEnsembleSAC
+              #"SunriseSAC"                 : SunriseSAC,
+              #"Sunrise_VarEnsembleSAC"     : Sunrise_VarEnsembleSAC,
+             # 
+              #"UWACSAC"                    : UWACSAC,
+              #"UWAC_VarEnsembleSAC"        : UWAC_VarEnsembleSAC
               }
 
 
@@ -172,6 +173,20 @@ parser.add_argument('--num_layer', default=2, type=int)
 parser.add_argument('--save_freq', default=0, type=int)
 
 
+#Risk parameters
+parser.add_argument("--use-risk", type=str2bool, nargs='?',
+                        const=True, default=False,
+                        help="whether to use calculated eps using minimum effective batch size")
+parser.add_argument("--fine-tune-risk", type=str2bool, nargs='?',
+                        const=True, default=False,
+                        help="whether to use calculated eps using minimum effective batch size")
+parser.add_argument('--risk-batch-size', default=256, type=int)
+parser.add_argument("--risk-lr", default=3e-4, type=float,
+                    help="learning rate for critic updates")
+parser.add_argument('--quantile-size', default=4, type=int)
+parser.add_argument('--quantile-num', default=10, type=int)
+
+
 
 target_type = ["", "_mean_target"]
 
@@ -200,6 +215,7 @@ opt.minimal_eff_bs = int(opt.minimal_eff_bs_ratio * opt.eff_batch_size)
 print(vars(opt))
 
 
+
 if "Mean_Target" in opt.model:
     opt.mean_target = True
 
@@ -209,14 +225,18 @@ if __name__ == "__main__":
         os.makedirs(opt.log_dir)
     except:
         pass
-
+    wandb.init(config=vars(opt), entity="kaustubh_umontreal",
+                    project="risk_aware_exploration",
+                    monitor_gym=True,
+                    sync_tensorboard=True, save_code=True)
+    
     Model = model_dict[opt.model]
     if "sac" not in opt.model.lower():
         env = gym.make(opt.env)
-        env.seed(opt.env_seed)
+        #env.seed(opt.env_seed)
         agent = Model(env, opt, device=device)
         agent.train(n_episodes=opt.num_episodes, eps_decay=opt.eps_decay)
     else:
         run_sac(Model, opt)
 
-tracker.stop()
+# tracker.stop()
