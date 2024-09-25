@@ -91,14 +91,14 @@ class DQNAgent():
         state = torch.from_numpy(state).float().unsqueeze(0).to(self.device)
         self.qnetwork_local.eval()
         with torch.no_grad():
-            action_values = self.qnetwork_local(state)
+            action_values_t = self.qnetwork_local(state)
         self.qnetwork_local.train()
-        action_values = action_values.cpu().data.numpy()
+        action_values = action_values_t.cpu().data.numpy()
         # Epsilon-greedy action selection
         if random.random() > eps:
-            return np.argmax(action_values), np.mean(action_values)
+            return np.argmax(action_values), np.mean(action_values), action_values_t
         else:
-            return random.choice(np.arange(self.action_size)), np.mean(action_values)
+            return random.choice(np.arange(self.action_size)), np.mean(action_values), action_values_t
 
     def learn(self, experiences, gamma):
         """Update value parameters using given batch of experience tuples.
@@ -198,6 +198,7 @@ class DQNAgent():
         episodes_list = []
         state_count_list = []
         states_repr = []
+        q_values = None
         import pandas as pd
         df = pd.DataFrame(columns=["state", "episode", "count"])
         for i_episode in range(1, n_episodes+1):
@@ -240,7 +241,8 @@ class DQNAgent():
                 pos = list(zip(*np.where(old_state["board"].ravel() == 2)))[0][0]
                 state_count[pos] += 1
                 ep_obs.append(pos)
-                action, Q = self.act(state, eps, is_train=True)
+                action, Q, Q_a = self.act(state, eps, is_train=True)
+                q_values = Q_a.unsqueeze(0) if q_values is None else torch.cat([q_values, Q_a.unsqueeze(0)], axis=0)
                 _, reward, not_done, old_next_state = self.env.step(action)
                 if i_episode % 10 == 0:
                     self.save_board(old_next_state["RGB"], os.path.join(storage_path, "%d_%d.png"%(i_episode, t)), "Episode=%d | Step=%d"%(i_episode, t))
@@ -264,8 +266,9 @@ class DQNAgent():
                     e_risks = list(reversed(range(t+1))) if t < max_t-1 else [t]*t
                     for i in range(t+1):
                         self.risk_stats[ep_obs[i]].append(e_risks[i])
-
-                    reward += self.opt.end_reward
+                    
+                    if (self.env.environment_data['safety'] < 1):
+                        reward += self.opt.end_reward
                     ep_obs = []
                 score += reward
                 if logs is not None:
@@ -319,6 +322,11 @@ class DQNAgent():
 
         with open("risk_stats.pkl", "wb") as f:
             pickle.dump(self.risk_stats, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        # Save model at the end 
+        torch.save(self.qnetwork_local.state_dict(), "q_net_%s.pt"%self.opt.safety_info)
+        # Save qvalues over time 
+        torch.save(q_values, "q_values_%s.pt"%self.opt.safety_info)
 
     def test(self, episode, num_trials=5, max_t=1000):
         score_list, variance_list = [], []
