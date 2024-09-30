@@ -96,9 +96,9 @@ class DQNAgent():
         action_values = action_values_t.cpu().data.numpy()
         # Epsilon-greedy action selection
         if random.random() > eps:
-            return np.argmax(action_values), np.mean(action_values), action_values_t
+            return np.argmax(action_values), np.mean(action_values)
         else:
-            return random.choice(np.arange(self.action_size)), np.mean(action_values), action_values_t
+            return random.choice(np.arange(self.action_size)), np.mean(action_values)
 
     def learn(self, experiences, gamma):
         """Update value parameters using given batch of experience tuples.
@@ -201,8 +201,30 @@ class DQNAgent():
         q_values = None
         import pandas as pd
         df = pd.DataFrame(columns=["state", "episode", "count"])
+
+        all_states = []
+        _, _, _, obs_org = self.env.reset() 
+        obs_org = obs_org["board"]
+        obs_org[obs_org==2] = 1 # setting the agent's current position to empty space
+        # iterating through all positions agent can have.
+        safety_values = [1, 2, 3, 2, 1, 1, 2, 3, 2, 1, 1, 2, 3, 3, 2, 1, 1, 2, 3, 2, 1]
+        for i, ind in enumerate(np.argwhere(obs_org==1)):
+            obs = obs_org.copy()
+            obs[ind[0], ind[1]] = 2
+            if self.opt.safety_info == "gt":
+                obs = list(obs.ravel()) + [safety_values[i]]
+            else:
+                obs = obs.ravel()
+            all_states.append(obs)
+        
+        # print(all_states)
+        all_states = torch.from_numpy(np.array(all_states)).to(self.device).float()
+        state_visitations_by_episode = {0: [], 1: [], 2: [], 3: [], 4: [], 5: []}
+        recorder_episodes = {0: [], 1: [], 2: [], 3: [], 4: [], 5: []}
         for i_episode in range(1, n_episodes+1):
-            self.env = IslandNavigationEnvironment(level_num=0)
+            state_visit_ep = np.zeros(48)
+            level_num = np.random.randint(0, 5)
+            self.env = IslandNavigationEnvironment(level_num=level_num)
             _, _, _, old_state = self.env.reset()
             # if i_episode-1 % 10 == 0:
             fig, ax = plt.subplots(1, 2)
@@ -224,6 +246,11 @@ class DQNAgent():
             episodes_list.extend([i_episode]*48)
             states_repr.extend(list(range(48)))
 
+            if i_episode % 10 == 0 or (i_episode==1):
+                q_all_states = self.qnetwork_local(all_states)
+                torch.save(q_all_states, "q_all_states_%s_%d.pt"%(self.opt.safety_info, i_episode))
+
+
 
                 # self.save_board(state["RGB"], os.path.join(storage_path, "%d_%d.png"%(i_episode, 0)), "Episode=%d | Step=%d"%(i_episode, 0))
             state = old_state["board"].ravel()
@@ -234,19 +261,22 @@ class DQNAgent():
                 state = np.array(list(state) + def_risk)
 
 
-
-            
+            recorder_episodes[level_num].append(i_episode)
+            goal_pos = list(zip(*np.where(old_state["board"].ravel() == 4)))[0][0]
             score, ep_var, ep_weights, eff_bs_list, xi_list, ep_Q, ep_loss = 0, [], [], [], [], [], []   # list containing scores from each episode
             for t in range(max_t):
                 pos = list(zip(*np.where(old_state["board"].ravel() == 2)))[0][0]
                 state_count[pos] += 1
+                # if level_num == 0:
+                state_visit_ep[pos] += 1
+
                 ep_obs.append(pos)
-                action, Q, Q_a = self.act(state, eps, is_train=True)
-                q_values = Q_a.unsqueeze(0) if q_values is None else torch.cat([q_values, Q_a.unsqueeze(0)], axis=0)
+                action, Q = self.act(state, eps, is_train=True)
+                # q_values = Q_a.unsqueeze(0) if q_values is None else torch.cat([q_values, Q_a.unsqueeze(0)], axis=0)
                 _, reward, not_done, old_next_state = self.env.step(action)
                 if i_episode % 10 == 0:
                     self.save_board(old_next_state["RGB"], os.path.join(storage_path, "%d_%d.png"%(i_episode, t)), "Episode=%d | Step=%d"%(i_episode, t))
-                if reward is None:
+                if reward is None or reward < 0:
                     reward = 0
                 next_state = old_next_state['board'].ravel()
                 if self.opt.safety_info == "gt":
@@ -258,11 +288,16 @@ class DQNAgent():
                     except:
                         risk = def_risk
                     next_state = np.array(list(next_state) + def_risk)
+
+             
                 
                 logs = self.step(state, action, reward, next_state, not not_done)
                 state = next_state
                 old_state = old_next_state
                 if not not_done:
+                    if reward > 0:
+                        state_visit_ep[goal_pos] += 1
+                        
                     e_risks = list(reversed(range(t+1))) if t < max_t-1 else [t]*t
                     for i in range(t+1):
                         self.risk_stats[ep_obs[i]].append(e_risks[i])
@@ -301,6 +336,8 @@ class DQNAgent():
                 state_count[pos] += 1
             except:
                 pass
+
+            state_visitations_by_episode[level_num].append(state_visit_ep)
             scores_window.append(score)        # save most recent score
             scores.append(score)               # save most recent score
             eps = max(eps_end, eps_decay*eps)  # decrease epsilon
@@ -317,16 +354,22 @@ class DQNAgent():
         df["episode"] = episodes_list
         df["count"] = state_count_list
         df.to_csv(os.path.join(storage_path, "stats.csv"), encoding="utf-8")
-        with open(os.path.join(storage_path, "state_visitations.pkl"), "wb") as f:
+        with open(os.path.join(storage_path, "state_visitations_%s.pkl"%self.opt.safety_info), "wb") as f:
             pickle.dump(state_count, f, protocol=pickle.HIGHEST_PROTOCOL)
 
         with open("risk_stats.pkl", "wb") as f:
             pickle.dump(self.risk_stats, f, protocol=pickle.HIGHEST_PROTOCOL)
 
+        state_visitations = {"visit": state_visitations_by_episode, "episodes": recorder_episodes}
+        with open(os.path.join(storage_path, "state_visitations_by_episode%s.pkl"%self.opt.safety_info), "wb") as f:
+            pickle.dump(state_visitations_by_episode, f, protocol=pickle.HIGHEST_PROTOCOL)
+        with open(os.path.join(storage_path, "episode_run_by_level%s.pkl"%self.opt.safety_info), "wb") as f:
+            pickle.dump(recorder_episodes, f, protocol=pickle.HIGHEST_PROTOCOL)
+
         # Save model at the end 
         torch.save(self.qnetwork_local.state_dict(), "q_net_%s.pt"%self.opt.safety_info)
         # Save qvalues over time 
-        torch.save(q_values, "q_values_%s.pt"%self.opt.safety_info)
+        # torch.save(q_values, "q_values_%s.pt"%self.opt.safety_info)
 
     def test(self, episode, num_trials=5, max_t=1000):
         score_list, variance_list = [], []
