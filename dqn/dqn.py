@@ -12,6 +12,7 @@ from collections import namedtuple, deque, Counter
 from utils import * 
 from .networks import *
 
+from island_navigation import *
 
 class DQNAgent():
     """Interacts with and learns from the environment."""
@@ -27,16 +28,16 @@ class DQNAgent():
         """
         self.env = env
         self.opt = opt
-        self.state_size = env.observation_space.shape[0]
-        self.action_size = env.action_space.n
+        self.state_size = np.array(env.observation_spec()["board"].shape).prod()
+        self.action_size = env.action_spec().maximum + 1
         self.seed = random.seed(opt.env_seed)
         self.test_scores = []
         self.device = device
         self.mask = False
 
         # Q-Network
-        self.qnetwork_local = QNetwork(self.state_size, self.action_size, opt.net_seed).to(self.device)
-        self.qnetwork_target = QNetwork(self.state_size, self.action_size, opt.net_seed).to(self.device)
+        self.qnetwork_local = QCNNetwork(self.state_size, self.action_size, opt.net_seed).to(self.device)
+        self.qnetwork_target = QCNNetwork(self.state_size, self.action_size, opt.net_seed).to(self.device)
         self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=opt.lr)
 
         # Replay memory
@@ -92,13 +93,14 @@ class DQNAgent():
             gamma (float): discount factor
         """
         states, actions, rewards, next_states, dones = experiences
-        # Get max predicted Q values (for next states) from target model
-        Q_targets_next = self.qnetwork_target(next_states).detach().max(1)[0].unsqueeze(1)
+        # Get max predicted Q values (for next states) from target modela
+
+        Q_targets_next = self.qnetwork_target(next_states.unsqueeze(1)).detach().max(1)[0].unsqueeze(1)
         # Compute Q targets for current states 
         Q_targets = rewards + (gamma * Q_targets_next * (1 - dones))
 
         # Get expected Q values from local model
-        Q_expected = self.qnetwork_local(states).gather(1, actions)
+        Q_expected = self.qnetwork_local(states.unsqueeze(1)).gather(1, actions)
 
         # Compute loss
         weights = torch.ones(Q_expected.size()).to(self.device) / self.opt.batch_size
@@ -156,16 +158,22 @@ class DQNAgent():
         scores = []
         scores_window = deque(maxlen=100)  # last 100 scores
         eps = eps_start                    # initialize epsilon
+        
         for i_episode in range(1, n_episodes+1):
-            state = self.env.reset()
+            level_num = np.random.randint(0, 5)
+            self.env = IslandNavigationEnvironment(level_num=level_num)
+            _, _, _, state = self.env.reset() 
             score, ep_var, ep_weights, eff_bs_list, xi_list, ep_Q, ep_loss = 0, [], [], [], [], [], []   # list containing scores from each episode
             for t in range(max_t):
-                action, Q = self.act(state, eps, is_train=True)
-                next_state, reward, done, _ = self.env.step(action)
-                logs = self.step(state, action, reward, next_state, done)
-                state = next_state
+                action, Q = self.act(state["board"].reshape(1, 6, 8), eps, is_train=True)
+                _, reward, not_done, next_state = self.env.step(action)
+                done = not not_done
+                reward = 0 if reward is None or reward < 0 else reward
                 if done:
                     reward += self.opt.end_reward
+                logs = self.step(state["board"].reshape(1, 6, 8), action, reward, next_state["board"].reshape(1, 6, 8), done)
+                state = next_state
+
                 score += reward
                 if logs is not None:
                     # try:
@@ -188,8 +196,8 @@ class DQNAgent():
             #    "Loss (Median)": np.median(ep_loss)}, commit=False)
             #if len(ep_var) > 0: # if there are entries in the variance list
 	    #        self.train_log(ep_var, ep_weights, eff_bs_list, eps_list)
-            if i_episode % self.opt.test_every == 0:
-                self.test(episode=i_episode)
+            # if i_episode % self.opt.test_every == 0:
+            #     self.test(episode=i_episode)
  
             scores_window.append(score)        # save most recent score
             scores.append(score)               # save most recent score

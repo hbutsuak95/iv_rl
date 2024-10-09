@@ -8,12 +8,12 @@ import torch.optim as optim
 import torch.nn.functional as F
 
 from dqn import * 
-from sac import *
+# from sac import *
 from utils import *
 from config import config 
-from codecarbon import EmissionsTracker
-tracker = EmissionsTracker()
-tracker.start()
+# from codecarbon import EmissionsTracker
+# tracker = EmissionsTracker()
+# tracker.start()
 
 import os 
 import time
@@ -21,6 +21,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 os.environ["WANDB_SILENT"] = "true"
+from island_navigation import *
 
 model_dict = {"DQN"                        : DQNAgent,
               "VarDQN"                     : LossAttDQN,
@@ -36,28 +37,28 @@ model_dict = {"DQN"                        : DQNAgent,
               "IV_VarEnsembleDQN"          : IV_LakshmiBootstrapDQN,
               "IV_DQN"                     : IV_LakshmiBootstrapDQN,
 
-              "SunriseDQN"                 : Sunrise_BootstrapDQN,
-              "Sunrise_VarEnsembleDQN"     : Sunrise_LakshmiBootstrapDQN,
+            #   "SunriseDQN"                 : Sunrise_BootstrapDQN,
+            #   "Sunrise_VarEnsembleDQN"     : Sunrise_LakshmiBootstrapDQN,
 
-              "UWACDQN"                    : UWAC_DQN,
-              "UWAC_VarEnsembleDQN"        : UWAC_LakshmiBootstrapDQN,
+            #   "UWACDQN"                    : UWAC_DQN,
+            #   "UWAC_VarEnsembleDQN"        : UWAC_LakshmiBootstrapDQN,
 
 
-              "SAC"                        : SACTrainer,
-              "VarSAC"                     : VarSACTrainer,
-              "IV_VarSAC"                  : IV_VarSAC,
+            #   "SAC"                        : SACTrainer,
+            #   "VarSAC"                     : VarSACTrainer,
+            #   "IV_VarSAC"                  : IV_VarSAC,
 
-              "EnsembleSAC"                : EnsembleSAC,
-              "IV_EnsembleSAC"             : IV_EnsembleSAC,
-              "VarEnsembleSAC"             : VarEnsembleSAC,
-              "IV_SAC"                     : IV_VarEnsembleSAC,
-              "IV_VarEnsembleSAC"          : IV_VarEnsembleSAC,
+            #   "EnsembleSAC"                : EnsembleSAC,
+            #   "IV_EnsembleSAC"             : IV_EnsembleSAC,
+            #   "VarEnsembleSAC"             : VarEnsembleSAC,
+            #   "IV_SAC"                     : IV_VarEnsembleSAC,
+            #   "IV_VarEnsembleSAC"          : IV_VarEnsembleSAC,
 
-              "SunriseSAC"                 : SunriseSAC,
-              "Sunrise_VarEnsembleSAC"     : Sunrise_VarEnsembleSAC,
+            #   "SunriseSAC"                 : SunriseSAC,
+            #   "Sunrise_VarEnsembleSAC"     : Sunrise_VarEnsembleSAC,
               
-              "UWACSAC"                    : UWACSAC,
-              "UWAC_VarEnsembleSAC"        : UWAC_VarEnsembleSAC
+            #   "UWACSAC"                    : UWACSAC,
+            #   "UWAC_VarEnsembleSAC"        : UWAC_VarEnsembleSAC
               }
 
 
@@ -212,11 +213,11 @@ if __name__ == "__main__":
 
     Model = model_dict[opt.model]
     if "sac" not in opt.model.lower():
-        env = gym.make(opt.env)
-        env.seed(opt.env_seed)
+        env = IslandNavigationEnvironment()
+        # env.seed(opt.env_seed)
         agent = Model(env, opt, device=device)
         agent.train(n_episodes=opt.num_episodes, eps_decay=opt.eps_decay)
     else:
         run_sac(Model, opt)
 
-tracker.stop()
+# tracker.stop()
