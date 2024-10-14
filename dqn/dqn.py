@@ -64,13 +64,14 @@ class DQNAgent():
 
     def step(self, state, action, reward, next_state, done):
         # Save experience in replay memory
-        if self.mask:
-            mask = self.random_state.binomial(1, self.opt.mask_prob, self.opt.num_nets)
-            self.memory.add(state, action, reward, next_state, done, mask)
-        else:
-            self.memory.add(state, action, reward, next_state, done)
+        # if self.mask:
+        #     mask = self.random_state.binomial(1, self.opt.mask_prob, self.opt.num_nets)
+        #     self.memory.add(state, action, reward, next_state, done, mask)
+        # else:
+        #     self.memory.add(state, action, reward, next_state, done)
 
         # Learn every UPDATE_EVERY time steps.
+        # print(len(self.memory))
         self.t_step = (self.t_step + 1) % self.opt.update_every
         if self.t_step == 0:
             # If enough samples are available in memory, get random subset and learn
@@ -95,10 +96,10 @@ class DQNAgent():
         self.qnetwork_local.train()
         action_values = action_values_t.cpu().data.numpy()
         # Epsilon-greedy action selection
-        if random.random() > eps:
-            return np.argmax(action_values), np.mean(action_values)
-        else:
-            return random.choice(np.arange(self.action_size)), np.mean(action_values)
+        # if random.random() > eps:
+        return np.argmax(action_values), np.mean(action_values)
+        # else:
+        #     return random.choice(np.arange(self.action_size)), np.mean(action_values)
 
     def learn(self, experiences, gamma):
         """Update value parameters using given batch of experience tuples.
@@ -108,6 +109,7 @@ class DQNAgent():
             gamma (float): discount factor
         """
         states, actions, rewards, next_states, dones = experiences
+        states, next_states = states[:, :-1], next_states[:, :-1]
         # Get max predicted Q values (for next states) from target model
         Q_targets_next = self.qnetwork_target(next_states).detach().max(1)[0].unsqueeze(1)
         # Compute Q targets for current states 
@@ -191,6 +193,7 @@ class DQNAgent():
         num_terminations = 0
         storage_path = os.path.join("./islandnav/", self.opt.safety_info)
         try:
+            os.makedirs(os.path.join(storage_path, "rb"))
             os.makedirs(os.path.join(storage_path, "state_visit"))
         except:
             pass
@@ -250,7 +253,17 @@ class DQNAgent():
                 q_all_states = self.qnetwork_local(all_states)
                 torch.save(q_all_states, "q_all_states_%s_%d.pt"%(self.opt.safety_info, i_episode))
 
+            # Save replay buffer 
 
+            # with open(os.path.join(storage_path, "rb", "rb_%d.pkl"%(i_episode)), 'wb') as f:
+            #     data = [x._asdict() for x in list(self.memory.memory)]
+            #     pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+            
+            with open(os.path.join("./islandnav/gt", "rb", "rb_%d.pkl"%(i_episode)), 'rb') as f:
+                loaded_data = pickle.load(f)
+                self.memory.memory = deque([self.memory.experience(**person_dict) for person_dict in loaded_data])
+    
 
                 # self.save_board(state["RGB"], os.path.join(storage_path, "%d_%d.png"%(i_episode, 0)), "Episode=%d | Step=%d"%(i_episode, 0))
             state = old_state["board"].ravel()
