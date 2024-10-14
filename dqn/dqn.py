@@ -44,10 +44,16 @@ class DQNAgent():
         self.device = device
         self.mask = False
 
-        # Q-Network
-        self.qnetwork_local = QNetwork(self.state_size, self.action_size, opt.net_seed).to(self.device)
-        self.qnetwork_target = QNetwork(self.state_size, self.action_size, opt.net_seed).to(self.device)
+        # Q-Network (without risk)
+        self.qnetwork_local = QNetwork(self.state_size-1, self.action_size, opt.net_seed).to(self.device)
+        self.qnetwork_target = QNetwork(self.state_size-1, self.action_size, opt.net_seed).to(self.device)
         self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=opt.lr)
+
+        # Q-Network (with risk)
+        self.qnetwork_local_risk = QNetwork(self.state_size, self.action_size, opt.net_seed).to(self.device)
+        self.qnetwork_target_risk = QNetwork(self.state_size, self.action_size, opt.net_seed).to(self.device)
+        self.optimizer_risk = optim.Adam(self.qnetwork_local_risk.parameters(), lr=opt.lr)
+
 
         # Replay memory
         self.memory = ReplayBuffer(opt, self.action_size, 42, self.device, self.mask)
@@ -77,9 +83,49 @@ class DQNAgent():
             if len(self.memory) > self.opt.batch_size:
                 experiences = self.memory.sample()
                 return self.learn(experiences, self.opt.gamma)
+                # return self.learn_risk(experiences, self.opt.gamma)
             else:
                 return None
-                
+
+    def step_risk(self, state, action, reward, next_state, done):
+        # Save experience in replay memory
+        if self.mask:
+            mask = self.random_state.binomial(1, self.opt.mask_prob, self.opt.num_nets)
+            self.memory.add(state, action, reward, next_state, done, mask)
+        else:
+            self.memory.add(state, action, reward, next_state, done)
+
+        # Learn every UPDATE_EVERY time steps.
+        self.t_step = (self.t_step + 1) % self.opt.update_every
+        if self.t_step == 0:
+            # If enough samples are available in memory, get random subset and learn
+            if len(self.memory) > self.opt.batch_size:
+                experiences = self.memory.sample()
+                # return self.learn(experiences, self.opt.gamma)
+                return self.learn_risk(experiences, self.opt.gamma)
+            else:
+                return None
+
+    def act_risk(self, state, eps=0., is_train=False):
+        """Returns actions for given state as per current policy.
+        
+        Params
+        ======
+            state (array_like): current state
+            eps (float): epsilon, for epsilon-greedy action selection
+        """
+        state = torch.from_numpy(state).float().unsqueeze(0).to(self.device)
+        self.qnetwork_local.eval()
+        with torch.no_grad():
+            action_values_t = self.qnetwork_local_risk(state)
+        self.qnetwork_local.train()
+        action_values = action_values_t.cpu().data.numpy()
+        # Epsilon-greedy action selection
+        if random.random() > eps:
+            return np.argmax(action_values), np.mean(action_values)
+        else:
+            return random.choice(np.arange(self.action_size)), np.mean(action_values)
+
     def act(self, state, eps=0., is_train=False):
         """Returns actions for given state as per current policy.
         
@@ -91,7 +137,7 @@ class DQNAgent():
         state = torch.from_numpy(state).float().unsqueeze(0).to(self.device)
         self.qnetwork_local.eval()
         with torch.no_grad():
-            action_values_t = self.qnetwork_local(state)
+            action_values_t = self.qnetwork_local(state[:,:-1])
         self.qnetwork_local.train()
         action_values = action_values_t.cpu().data.numpy()
         # Epsilon-greedy action selection
@@ -108,6 +154,9 @@ class DQNAgent():
             gamma (float): discount factor
         """
         states, actions, rewards, next_states, dones = experiences
+        # Removing risk information
+        states, next_states = states[:, :-1], next_states[:, :-1]
+
         # Get max predicted Q values (for next states) from target model
         Q_targets_next = self.qnetwork_target(next_states).detach().max(1)[0].unsqueeze(1)
         # Compute Q targets for current states 
@@ -129,6 +178,38 @@ class DQNAgent():
 
         # ------------------- update target network ------------------- #
         self.soft_update(self.qnetwork_local, self.qnetwork_target, self.opt.tau)                     
+
+    def learn_risk(self, experiences, gamma):
+        """Update value parameters using given batch of experience tuples.
+        Params
+        ======
+            experiences (Tuple[torch.Variable]): tuple of (s, a, r, s', done) tuples 
+            gamma (float): discount factor
+        """
+        states, actions, rewards, next_states, dones = experiences
+        # Get max predicted Q values (for next states) from target model
+        Q_targets_next = self.qnetwork_target_risk(next_states).detach().max(1)[0].unsqueeze(1)
+        # Compute Q targets for current states 
+        Q_targets = rewards + (gamma * Q_targets_next * (1 - dones))
+
+        # Get expected Q values from local model
+        Q_expected = self.qnetwork_local_risk(states).gather(1, actions)
+
+        # Compute loss
+        weights = torch.ones(Q_expected.size()).to(self.device) / self.opt.batch_size
+        loss = self.weighted_mse(Q_expected, Q_targets, weights)
+        # Minimize the loss
+        self.optimizer_risk.zero_grad()
+        loss.backward()
+        self.optimizer_risk.step()
+
+        # In order to log the loss value
+        self.loss = loss.item()
+
+        # ------------------- update target network ------------------- #
+        self.soft_update(self.qnetwork_local_risk, self.qnetwork_target_risk, self.opt.tau)                     
+
+
 
     def soft_update(self, local_model, target_model, tau):
         """Soft update model parameters.
@@ -185,12 +266,14 @@ class DQNAgent():
         flag = 1 # used for hyperparameter tuning
         scores = []
         scores_window = deque(maxlen=100)  # last 100 scores
+        scores_window_risk = deque(maxlen=100)
         eps = eps_start                    # initialize epsilon
         ep_obs = []
         def_risk = [0.1]*10
         num_terminations = 0
         storage_path = os.path.join("./islandnav/", self.opt.safety_info)
         try:
+            os.makedirs(os.path.join(storage_path, "qvals"))
             os.makedirs(os.path.join(storage_path, "state_visit"))
         except:
             pass
@@ -225,7 +308,9 @@ class DQNAgent():
             state_visit_ep = np.zeros(48)
             level_num = np.random.randint(0, 5)
             self.env = IslandNavigationEnvironment(level_num=level_num)
+            self.env_risk = IslandNavigationEnvironment(level_num=level_num)
             _, _, _, old_state = self.env.reset()
+            _, _, _, old_state_risk = self.env.reset()
             # if i_episode-1 % 10 == 0:
             fig, ax = plt.subplots(1, 2)
             l = ax[1].imshow(state_count.reshape(6, 8), cmap="coolwarm")
@@ -247,23 +332,28 @@ class DQNAgent():
             states_repr.extend(list(range(48)))
 
             if i_episode % 10 == 0 or (i_episode==1):
-                q_all_states = self.qnetwork_local(all_states)
-                torch.save(q_all_states, "q_all_states_%s_%d.pt"%(self.opt.safety_info, i_episode))
+                q_all_states = self.qnetwork_local(all_states[:, :-1])
+                torch.save(q_all_states, os.path.join(storage_path, "qvals", "q_all_states_%s_%d.pt"%(self.opt.safety_info, i_episode)))
 
+                q_all_states_risk = self.qnetwork_local_risk(all_states)
+                torch.save(q_all_states_risk, os.path.join(storage_path, "qvals", "q_all_states_risk_%s_%d.pt"%(self.opt.safety_info, i_episode)))
 
 
                 # self.save_board(state["RGB"], os.path.join(storage_path, "%d_%d.png"%(i_episode, 0)), "Episode=%d | Step=%d"%(i_episode, 0))
             state = old_state["board"].ravel()
+            state_risk = old_state_risk["board"].ravel()
             if self.opt.safety_info == "gt":
                 safety = self.env.environment_data['safety']
                 state = np.array(list(state) + [safety])
+                safety_risk = self.env_risk.environment_data['safety']
+                state_risk = np.array(list(state_risk) + [safety_risk])
             elif self.opt.safety_info == "emp_risk":
                 state = np.array(list(state) + def_risk)
 
 
             recorder_episodes[level_num].append(i_episode)
             goal_pos = list(zip(*np.where(old_state["board"].ravel() == 4)))[0][0]
-            score, ep_var, ep_weights, eff_bs_list, xi_list, ep_Q, ep_loss = 0, [], [], [], [], [], []   # list containing scores from each episode
+            score, score_risk, ep_var, ep_weights, eff_bs_list, xi_list, ep_Q, ep_loss = 0, 0, [], [], [], [], [], []   # list containing scores from each episode
             for t in range(max_t):
                 pos = list(zip(*np.where(old_state["board"].ravel() == 2)))[0][0]
                 state_count[pos] += 1
@@ -272,16 +362,25 @@ class DQNAgent():
 
                 ep_obs.append(pos)
                 action, Q = self.act(state, eps, is_train=True)
+                action_risk, Q = self.act_risk(state_risk, eps, is_train=True)
                 # q_values = Q_a.unsqueeze(0) if q_values is None else torch.cat([q_values, Q_a.unsqueeze(0)], axis=0)
                 _, reward, not_done, old_next_state = self.env.step(action)
+
+                _, reward_risk, not_done_risk, old_next_state_risk = self.env_risk.step(action_risk)
+                # print(self.env_risk.step(action_risk))
                 if i_episode % 10 == 0:
                     self.save_board(old_next_state["RGB"], os.path.join(storage_path, "%d_%d.png"%(i_episode, t)), "Episode=%d | Step=%d"%(i_episode, t))
                 if reward is None or reward < 0:
                     reward = 0
+                if reward_risk is None or reward_risk < 0:
+                    reward_risk = 0
                 next_state = old_next_state['board'].ravel()
+                next_state_risk = old_next_state_risk['board'].ravel()
                 if self.opt.safety_info == "gt":
                     safety = self.env.environment_data['safety']
                     next_state = np.array(list(next_state) + [safety])
+                    safety_risk = self.env_risk.environment_data['safety']
+                    next_state_risk = np.array(list(next_state_risk) + [safety_risk])
                 elif self.opt.safety_info == "emp_risk":
                     try:
                         risk = np.histogram(self.risk_stats[pos], range=(0,10), bins=10, density=True)
@@ -292,8 +391,11 @@ class DQNAgent():
              
                 
                 logs = self.step(state, action, reward, next_state, not not_done)
+                logs_risk = self.step_risk(state_risk, action_risk, reward_risk, next_state_risk, not not_done_risk)
                 state = next_state
                 old_state = old_next_state
+                state_risk = next_state_risk
+                old_state_risk = old_next_state_risk
                 if not not_done:
                     if reward > 0:
                         state_visit_ep[goal_pos] += 1
@@ -305,12 +407,19 @@ class DQNAgent():
                     if (self.env.environment_data['safety'] < 1):
                         reward += self.opt.end_reward
                     ep_obs = []
+                    
+                if not not_done_risk:
+                    if (self.env_risk.environment_data['safety'] < 1):
+                        reward_risk += self.opt.end_reward
+
+
                 score += reward
+                score_risk += reward_risk
                 if logs is not None:
                     # try:
                     ep_var.extend(logs[0])
                     ep_weights.extend(logs[1])
-                    eff_bs_list.append(logs[2])
+                    eff_bs_list.append(logs[2]) 
                     xi_list.append(logs[3])
                     # except:
                     #     pass
@@ -339,6 +448,7 @@ class DQNAgent():
 
             state_visitations_by_episode[level_num].append(state_visit_ep)
             scores_window.append(score)        # save most recent score
+            scores_window_risk.append(score_risk)
             scores.append(score)               # save most recent score
             eps = max(eps_end, eps_decay*eps)  # decrease epsilon
             wandb.log({"Moving Average Return/100episode": np.mean(scores_window)})
@@ -346,9 +456,10 @@ class DQNAgent():
             #    flag = 0 
             #    wandb.log({"EpisodeSolved": i_episode}, commit=False)
             wandb.log({"Terminations / Violations": num_terminations})
-            print('\rEpisode {}\tAverage Score: {:.2f}'.format(i_episode, np.mean(scores_window)), end="")
+            print('\rEpisode {}\tAverage Score: {:.2f}\t Average Score Risk: {:.2f}'.format(i_episode, np.mean(scores_window), np.mean(scores_window_risk)), end="")
+            print('\t', eps)
             if i_episode % 100 == 0:
-                print('\rEpisode {}\tAverage Score: {:.2f}'.format(i_episode, np.mean(scores_window)))
+                print('\rEpisode {}\tAverage Score: {:.2f}\t Average Score Risk: {:.2f}'.format(i_episode, np.mean(scores_window), np.mean(scores_window_risk)))
             #self.save(scores)
         df["state"] = states_repr
         df["episode"] = episodes_list
