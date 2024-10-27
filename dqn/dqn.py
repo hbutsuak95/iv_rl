@@ -193,6 +193,7 @@ class DQNAgent():
         num_terminations = 0
         storage_path = os.path.join("./islandnav/", self.opt.safety_info)
         try:
+            os.makedirs(os.path.join(storage_path, "qvals"))
             os.makedirs(os.path.join(storage_path, "rb"))
             os.makedirs(os.path.join(storage_path, "state_visit"))
         except:
@@ -251,7 +252,7 @@ class DQNAgent():
 
             if i_episode % 10 == 0 or (i_episode==1):
                 q_all_states = self.qnetwork_local(all_states)
-                torch.save(q_all_states, "q_all_states_%s_%d.pt"%(self.opt.safety_info, i_episode))
+                torch.save(q_all_states, os.path.join(storage_path, "qvals", "q_all_states_%s_%d.pt"%(self.opt.safety_info, i_episode)))
 
             # Save replay buffer 
 
@@ -302,7 +303,9 @@ class DQNAgent():
                         risk = def_risk
                     next_state = np.array(list(next_state) + def_risk)
 
-             
+                if not not_done:
+                    if (self.env.environment_data['safety'] < 1):
+                        reward += self.opt.end_reward
                 
                 logs = self.step(state, action, reward, next_state, not not_done)
                 state = next_state
@@ -315,8 +318,6 @@ class DQNAgent():
                     for i in range(t+1):
                         self.risk_stats[ep_obs[i]].append(e_risks[i])
                     
-                    if (self.env.environment_data['safety'] < 1):
-                        reward += self.opt.end_reward
                     ep_obs = []
                 score += reward
                 if logs is not None:
