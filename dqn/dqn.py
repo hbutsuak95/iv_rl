@@ -62,6 +62,13 @@ class DQNAgent():
         for i in range(board_x*board_y):
             self.risk_stats[i] = list()
 
+
+    def reset(self):
+        self.qnetwork_local = QNetwork(self.state_size, self.action_size, self.opt.net_seed).to(self.device)
+        self.qnetwork_target = QNetwork(self.state_size, self.action_size, self.opt.net_seed).to(self.device)
+        self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=self.opt.lr)
+
+
     def step(self, state, action, reward, next_state, done):
         # Save experience in replay memory
         if self.mask:
@@ -222,6 +229,9 @@ class DQNAgent():
         state_visitations_by_episode = {0: [], 1: [], 2: [], 3: [], 4: [], 5: []}
         recorder_episodes = {0: [], 1: [], 2: [], 3: [], 4: [], 5: []}
         for i_episode in range(1, n_episodes+1):
+            # Resetting the network
+            if i_episode + 1 % self.opt.reset_freq == 0:
+                self.reset()
             state_visit_ep = np.zeros(48)
             level_num = np.random.randint(0, 5)
             self.env = IslandNavigationEnvironment(level_num=level_num)

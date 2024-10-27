@@ -175,6 +175,10 @@ parser.add_argument("--use_bsuite", type=str2bool, nargs='?',
 parser.add_argument('--num_layer', default=2, type=int)
 parser.add_argument('--save_freq', default=0, type=int)
 
+# Arguments for resetting DQN 
+parser.add_argument('--reset-freq', default=100, type=int,
+                    help="frequency at which to reset the network ?")
+
 
 
 target_type = ["", "_mean_target"]
